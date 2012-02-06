@@ -39,7 +39,7 @@ from .func_inspect import get_func_code, get_func_name, filter_args
 from .logger import Logger, format_time
 from . import numpy_pickle
 from .disk import mkdirp, rm_subdirs
-from .store import SimpleStore
+from .store import store_from_scheme
 
 
 # TODO: The following object should have a data store object as a sub
@@ -91,7 +91,7 @@ class MemorizedFunc(Logger):
     # Public interface
     #-------------------------------------------------------------------------
 
-    def __init__(self, func, cache_scheme, ignore=None, mmap_mode=None,
+    def __init__(self, func, store_scheme, ignore=None, mmap_mode=None,
                  compress=False, verbose=1, timestamp=None):
         """
             Parameters
@@ -115,7 +115,7 @@ class MemorizedFunc(Logger):
         """
         Logger.__init__(self)
         self._verbose = verbose
-        self.cache_scheme = cache_scheme
+        self.store_scheme = store_scheme
         self.func = func
         self.mmap_mode = mmap_mode
         self.compress = compress
@@ -141,34 +141,25 @@ class MemorizedFunc(Logger):
             doc = func.__doc__
         self.__doc__ = 'Memoized version of %s' % doc
 
-        if isinstance(self.cache_scheme, (tuple, list)):
-            self.cache = self.cache_scheme[0](func, 
-                                              *self.cache_scheme[1:],
-                                              mmap_mode=mmap_mode,
-                                              ignore=ignore,
-                                              compress=self.compress,
-                                              verbose=verbose,
-                                              timestamp=self.timestamp)
-        else:
-            self.cache = SimpleStore(func,
-                                     self.cache_scheme,
-                                     mmap_mode=mmap_mode,
-                                     ignore=ignore,
-                                     compress=self.compress,
-                                     verbose=verbose,
-                                     timestamp=self.timestamp)
+
+        self.store = store_from_scheme(store_scheme)(func,
+                                             mmap_mode=mmap_mode,
+                                             ignore=ignore,
+                                             compress=self.compress,
+                                             verbose=verbose,
+                                             timestamp=self.timestamp)
 
     def __call__(self, *args, **kwargs):
         # Compare the function code with the previous to see if the
         # function code has changed
         # output_dir, _ = self.cache.get_output_dir(*args, **kwargs)
         # FIXME: The statements below should be try/excepted
-        if not self.cache.exists(*args, **kwargs):
+        if not self.store.exists(*args, **kwargs):
             return self.call(*args, **kwargs)
         else:
             try:
                 t0 = time.time()
-                out = self.cache.get(*args, **kwargs)
+                out = self.store.get(*args, **kwargs)
                 if self._verbose > 4:
                     t = time.time() - t0
                     _, name = get_func_name(self.func)
@@ -181,7 +172,7 @@ class MemorizedFunc(Logger):
                           '(args=%s, kwargs=%s)\n %s' %
                           (args, kwargs, traceback.format_exc()))
                 
-                self.cache.delete(*args, **kwargs)
+                self.store.delete(*args, **kwargs)
                 return self.call(*args, **kwargs)
 
     def __reduce__(self):
@@ -189,7 +180,7 @@ class MemorizedFunc(Logger):
             depending from it.
             In addition, when unpickling, we run the __init__
         """
-        return (self.__class__, (self.func, self.cache_scheme, self.ignore,
+        return (self.__class__, (self.func, self.store_scheme, self.ignore,
                 self.mmap_mode, self.compress, self._verbose))
 
     def call(self, *args, **kwargs):
@@ -201,7 +192,7 @@ class MemorizedFunc(Logger):
             print self.format_call(*args, **kwargs)
 
         output = self.func(*args, **kwargs)
-        self.cache.set(output, args, kwargs)
+        self.store.set(output, args, kwargs)
 
         # output_dir, argument_hash = self.cache.get_output_dir(*args, **kwargs)
         # output = self.func(*args, **kwargs)
@@ -265,7 +256,7 @@ class MemorizedFunc(Logger):
         return '%s(func=%s, cachedir=%s)' % (
                     self.__class__.__name__,
                     self.func,
-                    repr(self.cache_scheme),
+                    repr(self.store_scheme),
                     )
 
 ###############################################################################
@@ -284,7 +275,7 @@ class Memory(Logger):
     # Public interface
     #-------------------------------------------------------------------------
 
-    def __init__(self, cache_scheme, mmap_mode=None, compress=False, verbose=1):
+    def __init__(self, store_scheme, mmap_mode=None, compress=False, verbose=1):
         """
             Parameters
             ----------
@@ -313,7 +304,7 @@ class Memory(Logger):
             warnings.warn('Compressed results cannot be memmapped',
                           stacklevel=2)
 
-        self.cache_scheme = cache_scheme
+        self.store_scheme = store_scheme
 
     def cache(self, func=None, ignore=None, verbose=None,
                         mmap_mode=False):
@@ -346,7 +337,7 @@ class Memory(Logger):
             # Partial application, to be able to specify extra keyword
             # arguments in decorators
             return functools.partial(self.cache, ignore=ignore)
-        if self.cache_scheme is None:
+        if self.store_scheme is None:
             return func
         if verbose is None:
             verbose = self._verbose
@@ -354,7 +345,7 @@ class Memory(Logger):
             mmap_mode = self.mmap_mode
         if isinstance(func, MemorizedFunc):
             func = func.func
-        return MemorizedFunc(func, cache_scheme=self.cache_scheme,
+        return MemorizedFunc(func, store_scheme=self.store_scheme,
                                    mmap_mode=mmap_mode,
                                    ignore=ignore,
                                    compress=self.compress,
@@ -372,7 +363,7 @@ class Memory(Logger):
         # else:
         #     cache = SimpleStore(None, self.cache_scheme)
 
-        SimpleStore.reset_all(self.cache_scheme)
+        store_from_scheme(self.store_scheme)().clear()
 
     def eval(self, func, *args, **kwargs):
         """ Eval function func with arguments `*args` and `**kwargs`,
@@ -383,7 +374,7 @@ class Memory(Logger):
             up to date.
 
         """
-        if self.cachedir is None:
+        if self.store_scheme is None:
             return func(*args, **kwargs)
         return self.cache(func)(*args, **kwargs)
 
@@ -394,7 +385,7 @@ class Memory(Logger):
     def __repr__(self):
         return '%s(cachedir=%s)' % (
                     self.__class__.__name__,
-                    repr(self.cache_scheme),
+                    repr(self.store_scheme),
                     )
 
     def __reduce__(self):
@@ -403,5 +394,5 @@ class Memory(Logger):
             In addition, when unpickling, we run the __init__
         """
         # We need to remove 'joblib' from the end of cachedir
-        return (self.__class__, (self.cache_scheme,
+        return (self.__class__, (self.store_scheme,
                 self.mmap_mode, self.compress, self._verbose))
