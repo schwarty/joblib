@@ -73,6 +73,43 @@ class SimpleStore(object):
         except:
             " Objects like ufunc don't like that "
 
+    def get(self, *args, **kwargs):
+        output_dir, _ = self.get_output_dir(*args, **kwargs)
+        return self.load_output(output_dir)
+
+    def set(self, value, args=(), kwargs={}):
+        output_dir, argument_hash = self.get_output_dir(*args, **kwargs)
+        self._persist_output(value, output_dir)
+        self._persist_input(output_dir, *args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        output_dir, _ = self.get_output_dir(*args, **kwargs)
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    def exists(self, *args, **kwargs):
+        output_dir, _ = self.get_output_dir(*args, **kwargs)
+        return (
+            self._check_previous_func_code(stacklevel=3)
+            and os.path.exists(output_dir)
+            )
+
+    @classmethod
+    def reset_all(cls, cachedir):
+        rm_subdirs(cachedir)
+
+    def clear(self, warn=True):
+        """ Empty the function's cache.
+        """
+        func_dir = self._get_func_dir(mkdir=False)
+        # if self._verbose and warn:
+        #     self.warn("Clearing cache %s" % func_dir)
+        if os.path.exists(func_dir):
+            shutil.rmtree(func_dir, ignore_errors=True)
+        mkdirp(func_dir)
+        func_code, _, first_line = get_func_code(self.func)
+        func_code_file = os.path.join(func_dir, 'func_code.py')
+        self._write_func_code(func_code_file, func_code, first_line)
+
     def _get_func_dir(self, mkdir=True):
         """ Get the directory corresponding to the cache for the
             function.
@@ -168,22 +205,6 @@ class SimpleStore(object):
         self.clear(warn=True)
         return False
 
-    def clear(self, warn=True):
-        """ Empty the function's cache.
-        """
-        if self.func is None:
-            rm_subdirs(self.cachedir)
-            
-        else:
-            func_dir = self._get_func_dir(mkdir=False)
-            if self._verbose and warn:
-                self.warn("Clearing cache %s" % func_dir)
-            if os.path.exists(func_dir):
-                shutil.rmtree(func_dir, ignore_errors=True)
-            mkdirp(func_dir)
-            func_code, _, first_line = get_func_code(self.func)
-            func_code_file = os.path.join(func_dir, 'func_code.py')
-            self._write_func_code(func_code_file, func_code, first_line)
 
     def _persist_output(self, output, dir):
         """ Persist the given output tuple in the directory.

@@ -161,15 +161,14 @@ class MemorizedFunc(Logger):
     def __call__(self, *args, **kwargs):
         # Compare the function code with the previous to see if the
         # function code has changed
-        output_dir, _ = self.cache.get_output_dir(*args, **kwargs)
+        # output_dir, _ = self.cache.get_output_dir(*args, **kwargs)
         # FIXME: The statements below should be try/excepted
-        if not (self.cache._check_previous_func_code(stacklevel=3) and
-                                 os.path.exists(output_dir)):
+        if not self.cache.exists(*args, **kwargs):
             return self.call(*args, **kwargs)
         else:
             try:
                 t0 = time.time()
-                out = self.cache.load_output(output_dir)
+                out = self.cache.get(*args, **kwargs)
                 if self._verbose > 4:
                     t = time.time() - t0
                     _, name = get_func_name(self.func)
@@ -182,8 +181,7 @@ class MemorizedFunc(Logger):
                           '(args=%s, kwargs=%s)\n %s' %
                           (args, kwargs, traceback.format_exc()))
                 
-                self.cache.clear()
-                shutil.rmtree(output_dir, ignore_errors=True)
+                self.cache.delete(*args, **kwargs)
                 return self.call(*args, **kwargs)
 
     def __reduce__(self):
@@ -201,10 +199,14 @@ class MemorizedFunc(Logger):
         start_time = time.time()
         if self._verbose:
             print self.format_call(*args, **kwargs)
-        output_dir, argument_hash = self.cache.get_output_dir(*args, **kwargs)
+
         output = self.func(*args, **kwargs)
-        self.cache._persist_output(output, output_dir)
-        input_repr = self.cache._persist_input(output_dir, *args, **kwargs)
+        self.cache.set(output, args, kwargs)
+
+        # output_dir, argument_hash = self.cache.get_output_dir(*args, **kwargs)
+        # output = self.func(*args, **kwargs)
+        # self.cache._persist_output(output, output_dir)
+        # input_repr = self.cache._persist_input(output_dir, *args, **kwargs)
         duration = time.time() - start_time
         if self._verbose:
             _, name = get_func_name(self.func)
@@ -365,12 +367,12 @@ class Memory(Logger):
         if warn:
             self.warn('Flushing completely the cache')
 
-        if isinstance(self.cache_scheme, (tuple, list)):
-            cache = self.cache_scheme[0](None, *self.cache_scheme[1:])
-        else:
-            cache = SimpleStore(None, self.cache_scheme)
+        # if isinstance(self.cache_scheme, (tuple, list)):
+        #     cache = self.cache_scheme[0](None, *self.cache_scheme[1:])
+        # else:
+        #     cache = SimpleStore(None, self.cache_scheme)
 
-        cache.clear()
+        SimpleStore.reset_all(self.cache_scheme)
 
     def eval(self, func, *args, **kwargs):
         """ Eval function func with arguments `*args` and `**kwargs`,
